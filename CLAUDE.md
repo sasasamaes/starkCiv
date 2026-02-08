@@ -52,6 +52,10 @@ This project uses a structured spec workflow defined in `docs/FDSystem.md` (in S
 
 Each phase requires explicit user approval before proceeding. Always read all three spec documents before implementing any task.
 
+## Git & PR Rules
+
+- **NO Claude/AI attribution**: Never include "Co-Authored-By: Claude", "Generated with Claude Code", or any reference to Claude/AI in commits, PRs, commit messages, or any visible output. No traces of AI generation anywhere.
+
 ## Key Constraints
 
 - 4 players per match, 1 Smart Account = 1 civilization
