@@ -2,33 +2,33 @@ use snforge_std::{declare, ContractClassTrait, DeclareResultTrait, start_cheat_c
 use starknet::ContractAddress;
 use starkciv::starkciv_game::{IStarkCivGameDispatcher, IStarkCivGameDispatcherTrait};
 
-fn PLAYER1() -> ContractAddress {
+pub fn PLAYER1() -> ContractAddress {
     starknet::contract_address_const::<0x1>()
 }
 
-fn PLAYER2() -> ContractAddress {
+pub fn PLAYER2() -> ContractAddress {
     starknet::contract_address_const::<0x2>()
 }
 
-fn PLAYER3() -> ContractAddress {
+pub fn PLAYER3() -> ContractAddress {
     starknet::contract_address_const::<0x3>()
 }
 
-fn PLAYER4() -> ContractAddress {
+pub fn PLAYER4() -> ContractAddress {
     starknet::contract_address_const::<0x4>()
 }
 
-fn PLAYER5() -> ContractAddress {
+pub fn PLAYER5() -> ContractAddress {
     starknet::contract_address_const::<0x5>()
 }
 
-fn deploy_contract() -> IStarkCivGameDispatcher {
+pub fn deploy_contract() -> IStarkCivGameDispatcher {
     let contract = declare("StarkCivGame").unwrap().contract_class();
     let (contract_address, _) = contract.deploy(@array![]).unwrap();
     IStarkCivGameDispatcher { contract_address }
 }
 
-fn join_all_players(dispatcher: IStarkCivGameDispatcher) {
+pub fn join_all_players(dispatcher: IStarkCivGameDispatcher) {
     let contract_address = dispatcher.contract_address;
 
     start_cheat_caller_address(contract_address, PLAYER1());
