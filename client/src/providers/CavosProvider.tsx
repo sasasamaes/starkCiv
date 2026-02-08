@@ -1,8 +1,16 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback, ReactNode } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useMemo,
+  ReactNode,
+} from "react";
+import { AegisProvider, useAegis } from "@cavos/aegis";
+import type { TransactionResult } from "@cavos/aegis";
 
-// Cavos Aegis SDK types (simplified for MVP)
 interface AegisAccount {
   address: string;
   execute: (call: {
@@ -16,8 +24,9 @@ interface CavosContextType {
   account: AegisAccount | null;
   isConnected: boolean;
   isConnecting: boolean;
-  login: () => Promise<void>;
-  logout: () => void;
+  login: (email: string, password: string) => Promise<void>;
+  signup: (email: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
 }
 
 const CavosContext = createContext<CavosContextType>({
@@ -25,44 +34,61 @@ const CavosContext = createContext<CavosContextType>({
   isConnected: false,
   isConnecting: false,
   login: async () => {},
-  logout: () => {},
+  signup: async () => {},
+  logout: async () => {},
 });
 
 export function useCavos() {
   return useContext(CavosContext);
 }
 
-interface CavosProviderProps {
-  children: ReactNode;
-}
-
-export function CavosProvider({ children }: CavosProviderProps) {
-  const [account, setAccount] = useState<AegisAccount | null>(null);
+function CavosInner({ children }: { children: ReactNode }) {
+  const { aegisAccount, isConnected, currentAddress, signIn, signUp, signOut } =
+    useAegis();
   const [isConnecting, setIsConnecting] = useState(false);
 
-  const login = useCallback(async () => {
-    setIsConnecting(true);
-    try {
-      // In production, this would use the actual Cavos Aegis SDK:
-      // const aegis = new AegisSDK({ appId: process.env.NEXT_PUBLIC_CAVOS_APP_ID });
-      // const account = await aegis.login({ method: 'social' });
-      // For now, we simulate the connection
-      const mockAccount: AegisAccount = {
-        address: "0x0",
-        execute: async (call) => {
-          console.log("Executing:", call);
-          return { transaction_hash: "0x0" };
-        },
-      };
-      setAccount(mockAccount);
-    } finally {
-      setIsConnecting(false);
-    }
-  }, []);
+  const account: AegisAccount | null = useMemo(() => {
+    if (!isConnected || !currentAddress) return null;
+    return {
+      address: currentAddress,
+      execute: async (call) => {
+        const result: TransactionResult = await aegisAccount.execute(
+          call.contractAddress,
+          call.entrypoint,
+          call.calldata
+        );
+        return { transaction_hash: result.transactionHash };
+      },
+    };
+  }, [isConnected, currentAddress, aegisAccount]);
 
-  const logout = useCallback(() => {
-    setAccount(null);
-  }, []);
+  const login = useCallback(
+    async (email: string, password: string) => {
+      setIsConnecting(true);
+      try {
+        await signIn(email, password);
+      } finally {
+        setIsConnecting(false);
+      }
+    },
+    [signIn]
+  );
+
+  const signup = useCallback(
+    async (email: string, password: string) => {
+      setIsConnecting(true);
+      try {
+        await signUp(email, password);
+      } finally {
+        setIsConnecting(false);
+      }
+    },
+    [signUp]
+  );
+
+  const handleLogout = useCallback(async () => {
+    await signOut();
+  }, [signOut]);
 
   return (
     <CavosContext.Provider
@@ -71,10 +97,32 @@ export function CavosProvider({ children }: CavosProviderProps) {
         isConnected: !!account,
         isConnecting,
         login,
-        logout,
+        signup,
+        logout: handleLogout,
       }}
     >
       {children}
     </CavosContext.Provider>
+  );
+}
+
+interface CavosProviderProps {
+  children: ReactNode;
+}
+
+export function CavosProvider({ children }: CavosProviderProps) {
+  const network = (process.env.NEXT_PUBLIC_NETWORK as "SN_MAINNET" | "SN_SEPOLIA" | "SN_DEVNET") ?? "SN_SEPOLIA";
+
+  return (
+    <AegisProvider
+      config={{
+        network,
+        appName: "StarkCiv",
+        appId: process.env.NEXT_PUBLIC_CAVOS_APP_ID ?? "",
+        walletMode: "social-login",
+      }}
+    >
+      <CavosInner>{children}</CavosInner>
+    </AegisProvider>
   );
 }
