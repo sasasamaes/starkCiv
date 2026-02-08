@@ -5,3 +5,4 @@ mod test_aid;
 mod test_treaties;
 mod test_governance;
 mod test_victory;
+mod test_integration;
