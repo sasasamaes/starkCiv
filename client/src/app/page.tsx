@@ -1,12 +1,33 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useCavos } from "@/providers/CavosProvider";
 import { abbreviateAddress } from "@/lib/utils";
 
 export default function Home() {
-  const { account, isConnected, isConnecting, login } = useCavos();
+  const { account, isConnected, isConnecting, login, signup, logout } =
+    useCavos();
   const router = useRouter();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    try {
+      if (isSignUp) {
+        await signup(email, password);
+      } else {
+        await login(email, password);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Authentication failed");
+    }
+  };
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-[#0b0e17]">
@@ -56,23 +77,65 @@ export default function Home() {
           </span>
         </div>
 
-        {/* CTA Section */}
+        {/* Auth / CTA Section */}
         <div className="mt-4 flex flex-col items-center gap-4">
           {!isConnected ? (
-            <button
-              onClick={login}
-              disabled={isConnecting}
-              className="rounded-lg bg-blue-600 px-8 py-4 text-lg font-semibold text-white transition-all hover:bg-blue-500 hover:shadow-lg hover:shadow-blue-600/25 disabled:cursor-not-allowed disabled:opacity-50"
+            <form
+              onSubmit={handleSubmit}
+              className="flex w-full max-w-sm flex-col gap-3"
             >
-              {isConnecting ? (
-                <span className="flex items-center gap-2">
-                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  Connecting...
-                </span>
-              ) : (
-                "Play (No wallet needed)"
+              <input
+                type="email"
+                placeholder="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="rounded-lg border border-slate-700 bg-[#141825] px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-blue-500"
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                minLength={6}
+                className="rounded-lg border border-slate-700 bg-[#141825] px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-blue-500"
+              />
+
+              {error && (
+                <p className="text-sm text-red-400">{error}</p>
               )}
-            </button>
+
+              <button
+                type="submit"
+                disabled={isConnecting}
+                className="rounded-lg bg-blue-600 px-8 py-3 text-base font-semibold text-white transition-all hover:bg-blue-500 hover:shadow-lg hover:shadow-blue-600/25 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isConnecting ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    {isSignUp ? "Creating account..." : "Signing in..."}
+                  </span>
+                ) : isSignUp ? (
+                  "Sign Up"
+                ) : (
+                  "Sign In"
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSignUp(!isSignUp);
+                  setError("");
+                }}
+                className="text-sm text-slate-400 transition-colors hover:text-blue-400"
+              >
+                {isSignUp
+                  ? "Already have an account? Sign in"
+                  : "New here? Create an account"}
+              </button>
+            </form>
           ) : (
             <div className="flex flex-col items-center gap-4">
               <div className="flex items-center gap-2 rounded-lg border border-slate-700 bg-[#141825] px-4 py-2">
@@ -86,6 +149,12 @@ export default function Home() {
                 className="rounded-lg bg-green-600 px-8 py-4 text-lg font-semibold text-white transition-all hover:bg-green-500 hover:shadow-lg hover:shadow-green-600/25"
               >
                 Enter Lobby
+              </button>
+              <button
+                onClick={logout}
+                className="text-sm text-slate-500 transition-colors hover:text-slate-300"
+              >
+                Sign out
               </button>
             </div>
           )}
