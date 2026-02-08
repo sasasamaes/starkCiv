@@ -1,0 +1,229 @@
+# Plan de Implementacion — StarkCiv MVP
+
+- [ ] 1. Scaffolding del proyecto y configuracion base
+  - Inicializar proyecto Cairo con `scarb init` en `contracts/starkciv`
+  - Configurar `Scarb.toml` con dependencias: `starknet`, `snforge_std` (test)
+  - Inicializar proyecto Next.js con App Router en `client/` usando TypeScript
+  - Instalar dependencias frontend: `starknet.js`, SDK Cavos Aegis
+  - Crear archivo `lib/constants.ts` con enums (`BuildingType`, `TreatyType`, `TreatyStatus`, `ProposalKind`) y constantes del juego (`MAX_PLAYERS=4`, `MAP_SIZE=5`, `TURNS_PER_ERA=5`, `VICTORY_REP=10`, `VICTORY_TREATIES=2`)
+  - Crear archivo `lib/types.ts` con interfaces TypeScript que reflejan los structs Cairo: `Player`, `Tile`, `Treaty`, `Proposal`, `GameState`
+  - Crear archivo `lib/grid.ts` con funciones utilitarias: `tileToCoords(tileId) -> {x, y}`, `coordsToTile(x, y) -> tileId`, `isAdjacent(a, b) -> bool`, `getAdjacentTiles(tileId) -> tileId[]`
+  - Escribir tests unitarios para todas las funciones de `grid.ts` en `grid.test.ts`
+  - *Requisitos: 3, 5*
+
+- [ ] 2. Contrato Cairo — Structs, storage y lobby
+  - [ ] 2.1 Definir structs y storage del contrato
+    - Crear el contrato `StarkCivGame` con el trait `IStarkCivGame`
+    - Implementar structs: `Player`, `Tile`, `Treaty`, `Proposal`, `GameState`
+    - Definir storage: `game_started`, `max_players`, `player_count`, `current_turn`, `current_era`, `winner`, `players` (Map), `tiles` (Map), `treaties` (Map), `treaty_nonce`, `proposals` (Map), `proposal_nonce`, `player_addresses` (Map<u8, ContractAddress> para iterar), `has_voted` (Map<(u32, ContractAddress), bool>)
+    - Definir eventos: `PlayerJoined`, `GameStarted`, `ActionExecuted`, `TreatyProposed`, `TreatyAccepted`, `TreatyBroken`, `TreatyCompleted`, `ProposalCreated`, `VoteCast`, `ProposalExecuted`, `GameEnded`
+    - *Requisitos: 3, 4*
+  - [ ] 2.2 Implementar lobby: `join_game` y `start_game`
+    - `join_game`: validar game not started, player_count < 4, caller not already joined. Registrar player con valores iniciales (food=5, wood=2, reputation=0, alive=true). Incrementar player_count. Emitir `PlayerJoined`.
+    - `start_game`: validar player_count == 4. Asignar tiles spawn (0, 4, 20, 24) con City a cada jugador. Setear `game_started = true`, `current_turn = 1`, `current_era = 1`. Emitir `GameStarted`.
+    - Implementar views: `get_game_state`, `get_player`
+    - Escribir tests: join 4 players exitoso, reject 5th player, reject double join, start game con 4, reject start con <4
+    - *Requisitos: 2, 3*
+
+- [ ] 3. Contrato Cairo — Sistema de turnos y generacion de recursos
+  - Implementar `end_turn`:
+    - Validar game started y winner == 0
+    - Incrementar `current_turn`
+    - Para cada jugador alive: sumar +1 food por cada tile con Farm, +1 wood por cada tile con Market
+    - Si `current_turn % TURNS_PER_ERA == 1` (inicio de nueva era): incrementar `current_era`
+  - Implementar helper interno `_check_already_acted(caller)` que valida `last_action_turn < current_turn`
+  - Escribir tests: turn increment, resource generation con farms/markets, era increment cada 5 turnos, recursos acumulan correctamente con multiples farms
+  - *Requisitos: 4, 6*
+
+- [ ] 4. Contrato Cairo — Acciones: expand, build, train_guard
+  - [ ] 4.1 Implementar `expand(tile_id)`
+    - Validar: game started, caller alive, not already acted, tile has no owner, tile is adjacent to at least one tile owned by caller
+    - Implementar helper `_is_adjacent(tile_a, tile_b) -> bool` (solo ortogonal: dx+dy==1, sin diagonales)
+    - Implementar helper `_has_adjacent_owned_tile(caller, tile_id) -> bool` que itera tiles vecinos
+    - Asignar tile al caller, actualizar `last_action_turn`, emitir `ActionExecuted`
+    - Escribir tests: expand adjacent exitoso, reject non-adjacent, reject occupied tile, reject already acted this turn, reject tile fuera de rango (>24)
+    - *Requisitos: 5*
+  - [ ] 4.2 Implementar `build(tile_id, building_type)`
+    - Validar: game started, caller alive, not already acted, tile owned by caller, tile has no building (building == 0 o es City), building_type valido (2=Farm, 3=Market, 4=Embassy)
+    - Asignar building al tile, si Embassy: setear `player.embassy_built = true`
+    - Actualizar `last_action_turn`, emitir `ActionExecuted`
+    - Escribir tests: build Farm, build Market, build Embassy (verifica embassy_built), reject build on tile with building, reject build on enemy tile, reject invalid building_type
+    - *Requisitos: 6*
+  - [ ] 4.3 Implementar `train_guard(tile_id)`
+    - Validar: game started, caller alive, not already acted, tile owned by caller, tile has no guard
+    - Setear `tile.guard = true`, actualizar `last_action_turn`, emitir `ActionExecuted`
+    - Escribir tests: train guard exitoso, reject duplicate guard, reject enemy tile
+    - *Requisitos: 7*
+
+- [ ] 5. Contrato Cairo — Accion: send_aid y sistema de reputacion
+  - Implementar `send_aid(to, resource, amount)`:
+    - Validar: game started, caller alive, not already acted, target is valid player (alive), caller has sufficient resources
+    - Transferir recursos: decrementar del caller, incrementar del target
+    - Incrementar reputation del caller (+1 por cada aid enviado como regla MVP)
+    - Actualizar `last_action_turn`, emitir `ActionExecuted`
+  - Implementar view `get_tile(tile_id)`
+  - Escribir tests: send food exitoso (verifica transferencia + rep gain), send wood, reject insufficient food, reject insufficient wood, reject send to invalid player, reject send to self
+  - *Requisitos: 8*
+
+- [ ] 6. Contrato Cairo — Sistema de tratados
+  - Implementar `propose_treaty(to, treaty_type, duration)`:
+    - Validar: game started, caller alive, not already acted, caller has embassy, target is valid player, target != caller
+    - Crear Treaty con status=Pending, incrementar treaty_nonce
+    - Actualizar `last_action_turn`, emitir `TreatyProposed`
+  - Implementar `accept_treaty(treaty_id)`:
+    - Validar: treaty exists, status == Pending, caller == treaty.to
+    - Setear status=Active, start_turn=current_turn, end_turn=current_turn+duration
+    - Emitir `TreatyAccepted`
+    - Nota: accept_treaty NO consume la accion del turno (no actualiza last_action_turn)
+  - Implementar `break_treaty(treaty_id)`:
+    - Validar: treaty exists, status == Active, caller is party (from or to)
+    - Setear status=Broken, aplicar -2 reputation al caller, penalizar -1 food -1 wood
+    - Emitir `TreatyBroken`
+    - Nota: break_treaty NO consume la accion del turno
+  - Implementar logica de treaty completion en `end_turn`: si treaty.status == Active y current_turn >= treaty.end_turn → status=Completed, incrementar treaties_completed para ambas partes, +1 reputation a ambos. Emitir `TreatyCompleted`.
+  - Implementar view `list_treaties_for(addr)` que retorna array de treaties donde addr es from o to
+  - Escribir tests: propose exitoso, reject sin embassy, accept exitoso, reject accept por non-target, break exitoso con penalties verificadas, treaty completion automatica al expirar, list_treaties_for retorna correctos
+  - *Requisitos: 9*
+
+- [ ] 7. Contrato Cairo — Sistema de gobernanza (votacion)
+  - Implementar `create_proposal(kind, target)`:
+    - Validar: game started, es inicio de nueva era (current_turn coincide con inicio de era), no hay proposal activa para esta era
+    - Crear Proposal con era=current_era, executed=false
+    - Incrementar proposal_nonce, emitir `ProposalCreated`
+  - Implementar `vote(proposal_id, support)`:
+    - Validar: proposal exists, proposal.executed == false, caller is valid player, caller hasn't voted (via has_voted map)
+    - Incrementar votes_for o votes_against segun support
+    - Registrar has_voted[(proposal_id, caller)] = true
+    - Emitir `VoteCast`
+  - Implementar `execute_proposal(proposal_id)`:
+    - Validar: proposal exists, not executed, votes_for + votes_against >= player_count (o todos votaron)
+    - Si votes_for >= 3 (mayoria 3/4): aplicar efecto segun kind:
+      - Sanction (0): marcar al target para no poder expand siguiente turno (agregar campo `sanctioned_until` al Player)
+      - Subsidy (1): +1 food a todos los jugadores alive
+      - OpenBorders (2): marcar flag global para 1 turno (agregar `open_borders_until` al storage)
+      - GlobalTax (3): -1 wood a todos los jugadores alive (minimo 0)
+    - Setear proposal.executed = true, emitir `ProposalExecuted`
+  - Implementar view `get_active_proposal`
+  - Actualizar `expand` para respetar sancion: si `player.sanctioned_until >= current_turn` → reject
+  - Actualizar `expand` para respetar open borders: si `open_borders_until >= current_turn` → skip adjacency check
+  - Escribir tests: create proposal exitoso, vote for/against, execute con mayoria (efecto aplicado), execute sin mayoria (rechazado), reject double vote, sanction bloquea expand, subsidy da food, global tax resta wood, open borders permite expand no-adyacente
+  - *Requisitos: 10*
+
+- [ ] 8. Contrato Cairo — Condicion de victoria
+  - Implementar helper `_check_victory(player) -> bool`: reputation >= 10, embassy_built, treaties_completed >= 2
+  - Llamar `_check_victory` al final de cada funcion de accion (expand, build, train_guard, send_aid) y al final de `end_turn` (tras treaty completions y resource gen)
+  - Si victoria detectada: setear `winner = player.addr`, emitir `GameEnded(winner)`
+  - Agregar validacion `assert(winner == 0x0)` al inicio de todas las acciones
+  - Escribir tests: victoria con condiciones exactas (rep=10, embassy=true, treaties=2), no victoria parcial (rep=10 pero sin embassy), no victoria parcial (rep=9), juego se bloquea tras victoria (acciones rechazadas)
+  - *Requisitos: 11*
+
+- [ ] 9. Frontend — Setup, providers y conexion con contrato
+  - Crear `providers/CavosProvider.tsx` que wrappea `AegisProvider` con `appId` y `network` desde env vars
+  - Configurar `app/layout.tsx` con `CavosProvider` como wrapper root
+  - Crear `.env.local` con: `NEXT_PUBLIC_GAME_CONTRACT_ADDRESS`, `NEXT_PUBLIC_CAVOS_APP_ID`, `NEXT_PUBLIC_NETWORK=SN_SEPOLIA`
+  - Crear `lib/contract.ts` con el ABI del contrato compilado y una funcion para obtener la instancia del contrato
+  - Implementar hook `useGameState`: polling cada 5s de `get_game_state`, `get_player` (x4), `get_tile` (x25). Retorna `{ gameState, players, tiles, isLoading, refetch }`. Refetch manual tras cada tx.
+  - Implementar hook `usePlayer`: retorna el Player del caller usando el address de Cavos
+  - Escribir tests para `useGameState` y `usePlayer` con mocks de contract calls
+  - *Requisitos: 1, 3, 12*
+
+- [ ] 10. Frontend — Landing page y autenticacion
+  - Implementar `app/page.tsx` (landing):
+    - CTA "Play (No wallet needed)"
+    - Al click: iniciar flujo Cavos login (social/email)
+    - Post-login: mostrar address abreviada y boton "Enter Lobby"
+    - Click "Enter Lobby" → redirect a `/lobby`
+  - Escribir test: renderiza CTA, simula login, muestra address post-login
+  - *Requisitos: 1*
+
+- [ ] 11. Frontend — Lobby y matchmaking
+  - Implementar `app/lobby/page.tsx`:
+    - Opciones: "Join Public Match" / "Join with Code"
+    - Al unirse: ejecutar `join_game()` via contrato
+    - Mostrar slots con polling: `1/4`, `2/4`, `3/4`, `4/4` con addresses abreviadas
+    - Cuando 4/4: ejecutar `start_game()` y redirect a `/game`
+  - Implementar `components/lobby/LobbySlots.tsx`: muestra los 4 slots con estado
+  - Implementar hook `useContractActions` con las funciones: `joinGame()`, `startGame()` (ejecutan via `aegisAccount.execute()` con calldata apropiado)
+  - Escribir tests: renderiza slots, actualiza al unirse jugadores
+  - *Requisitos: 2*
+
+- [ ] 12. Frontend — Game screen: mapa y panel de recursos
+  - Implementar `components/map/GameMap.tsx`:
+    - Renderiza grid 5x5 con CSS Grid
+    - Recibe `tiles`, `currentPlayer`, `onTileClick`
+    - Cada tile muestra color de owner, icono de building, indicador de guard
+  - Implementar `components/map/Tile.tsx`:
+    - Muestra tile individual con visual segun estado
+    - Click handler para seleccionar tile
+  - Implementar `components/panels/ResourcePanel.tsx`:
+    - Muestra Food, Wood, Reputation, turno actual, Era actual
+    - Indicador de cooldown si ya actuo este turno
+  - Implementar `app/game/page.tsx`:
+    - Layout: mapa a la izquierda, panel lateral derecho
+    - Integra GameMap + ResourcePanel + ActionPanel (placeholder)
+    - Usa `useGameState` y `usePlayer` para obtener datos
+  - Escribir tests: GameMap renderiza 25 tiles, Tile muestra building correcto, ResourcePanel muestra valores
+  - *Requisitos: 3, 4*
+
+- [ ] 13. Frontend — Panel de acciones
+  - Extender `useContractActions` con: `expand(tileId)`, `build(tileId, buildingType)`, `trainGuard(tileId)`, `sendAid(to, resource, amount)`
+  - Implementar `components/panels/ActionPanel.tsx`:
+    - Muestra acciones contextuales segun tile seleccionado y estado:
+      - Tile sin owner + adyacente → "Expand"
+      - Tile propio sin building → "Build" (Farm/Market/Embassy)
+      - Tile propio sin guard → "Train Guard"
+    - Accion global "Send Aid" con formulario (player, resource, amount)
+    - Accion global "Propose Treaty" (link a `/diplomacy`)
+    - Deshabilitado si ya actuo este turno
+  - Implementar `components/ui/ConfirmDialog.tsx`: dialogo de confirmacion para acciones
+  - Implementar `components/ui/Toast.tsx`: feedback "Action submitted" post-tx
+  - Escribir tests: acciones correctas segun estado del tile, disabled cuando ya actuo
+  - *Requisitos: 5, 6, 7, 8*
+
+- [ ] 14. Frontend — Pantalla de diplomacia y tratados
+  - Extender `useContractActions` con: `proposeTreaty(to, type, duration)`, `acceptTreaty(treatyId)`, `breakTreaty(treatyId)`
+  - Implementar hook `useTreaties`: llama `list_treaties_for(playerAddress)`, filtra por status (pending incoming, active, completed/broken)
+  - Implementar `app/diplomacy/page.tsx`:
+    - Tabs: "Incoming Treaties", "Active Treaties", "History"
+  - Implementar `components/diplomacy/TreatyList.tsx`:
+    - Renderiza lista de treaties segun tab activo
+    - Botones Accept (incoming), Break (active)
+  - Implementar `components/diplomacy/TreatyModal.tsx`:
+    - Formulario: seleccionar jugador destino, tipo de tratado, duracion
+    - Boton "Propose"
+  - Escribir tests: tabs muestran treaties correctos, accept/break ejecutan tx
+  - *Requisitos: 9*
+
+- [ ] 15. Frontend — Votacion global y overlays
+  - Extender `useContractActions` con: `createProposal(kind, target)`, `vote(proposalId, support)`, `executeProposal(proposalId)`
+  - Implementar `components/diplomacy/VotingModal.tsx`:
+    - Muestra propuesta activa con descripcion legible
+    - Botones "Vote For" / "Vote Against"
+    - Se activa cuando hay proposal activa en la era actual
+  - Implementar `components/overlays/TutorialOverlay.tsx`:
+    - Contenido: "1 accion por turno", "Ganas por reputacion + tratados + embajada", "Votas al final de cada Era"
+    - Boton "Got it" que cierra y guarda en localStorage
+    - Se muestra solo la primera vez por partida
+  - Implementar `components/overlays/VictoryModal.tsx`:
+    - Se activa cuando `gameState.winner != 0x0`
+    - Muestra: "Diplomatic Victory", rep final, tratados completados
+    - Botones: "Play Again" (redirect a `/lobby`), "View On-chain History" (link externo)
+  - Escribir tests: VotingModal muestra proposal, TutorialOverlay se cierra al click, VictoryModal muestra winner
+  - *Requisitos: 10, 11, 14*
+
+- [ ] 16. Frontend — Feed de eventos del mundo
+  - Implementar `components/panels/EventFeed.tsx`:
+    - Lee eventos on-chain del contrato (PlayerJoined, ActionExecuted, TreatyProposed, TreatyAccepted, TreatyBroken, TreatyCompleted, ProposalCreated, VoteCast, ProposalExecuted, GameEnded)
+    - Traduce cada evento a texto legible: "Player A sent aid to Player B (+1 Rep)", "Sanction passed: Player C cannot Expand next turn"
+    - Muestra los ultimos N eventos en orden cronologico inverso
+  - Integrar EventFeed en `app/game/page.tsx` debajo del ResourcePanel
+  - Escribir test: renderiza eventos formateados correctamente
+  - *Requisitos: 13*
+
+- [ ] 17. Integracion end-to-end y flujo completo
+  - Desplegar contrato en Starknet devnet local (`katana`)
+  - Configurar frontend para apuntar a devnet
+  - Escribir test de integracion del flujo completo: join 4 players → start game → expand → build farm → build embassy → send aid → propose treaty → accept treaty → advance turns (treaty completes) → vote proposal → verify victory condition
+  - Verificar que todos los eventos se emiten correctamente y el EventFeed los renderiza
+  - Verificar transacciones gasless via Cavos en el flujo
+  - *Requisitos: 1-15*
